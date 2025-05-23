@@ -24,8 +24,5 @@ ENV FLASK_RUN_PORT=5000
 # Expose port Flask will run on
 EXPOSE 5000
 
-# Command to run the application
-# Using Gunicorn for a more production-ready WSGI server is recommended for actual production,
-# but for simplicity with async Flask and to keep dependencies minimal, we'll use Flask's built-in server.
-# For Gunicorn with Uvicorn workers for async: CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "4", "app:app", "-b", "0.0.0.0:5000"]
-CMD ["python", "-m", "flask", "run"]
+# Command to run the application using Hypercorn ASGI server
+CMD ["hypercorn", "app:app", "-b", "0.0.0.0:5000"]
