@@ -214,14 +214,24 @@ async def login_and_enumerate_task(url, username, password, log_queue):
         error_message = f"A Playwright error occurred: {str(e)}."
         await log_update(log_queue, "error", error_message)
         await log_update(log_queue, "end_stream", "Process failed.")
+    
     except Exception as e: # Catch any other unexpected errors
         error_message = f"An unexpected error occurred: {str(e)}."
+        
+        # --- ADD THESE LINES TO PRINT THE FULL TRACEBACK TO DOCKER LOGS ---
+        print(f"\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        print(f"!!! UNEXPECTED ERROR IN login_and_enumerate_task: {str(e)}")
+        import traceback
+        traceback.print_exc() # This prints the full stack trace
+        print(f"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
+        # --- END OF ADDED LINES ---
+        
         await log_update(log_queue, "error", error_message)
         await log_update(log_queue, "end_stream", "Process failed.")
     finally:
         if page and not page.is_closed():
             await log_update(log_queue, "dev", "Closing page for this task...")
             try:
-                await page.context.close() # Close context to ensure page and its listeners are gone
+                await page.context.close()
             except Exception as e:
                 await log_update(log_queue, "warn", f"Could not close page context: {e}")
