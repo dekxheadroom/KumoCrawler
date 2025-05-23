@@ -5,12 +5,9 @@ import json
 import io
 import scraper_logic # Keep existing import
 import asyncio
-import nest_asyncio
 from uuid import uuid4 # To generate unique task IDs
+import atexit
 import re # Make sure re is imported
-
-# Apply nest_asyncio to allow running asyncio code within Flask's existing event loop
-nest_asyncio.apply()
 
 load_dotenv()
 
@@ -138,16 +135,9 @@ import atexit
 def shutdown_playwright():
     print("Flask app is shutting down. Closing Playwright browser...")
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        if loop.is_running():
-            asyncio.ensure_future(scraper_logic.close_browser(), loop=loop)
-        else:
-            loop.run_until_complete(scraper_logic.close_browser())
-
+        # Since the main loop is gone, just run it simply.
+        # This might not run perfectly on Ctrl+C, but should run on clean shutdown.
+        asyncio.run(scraper_logic.close_browser())
     except Exception as e:
         print(f"Error during Playwright shutdown: {e}")
 
