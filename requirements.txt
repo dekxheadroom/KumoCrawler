@@ -1,4 +1,3 @@
 Flask[async]
 playwright>=1.30
 python-dotenv
-nest_asyncio
