@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KumoCrawler</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>KumoCrawler</h1>
+        <div class="mascot-container">
+            <img src="{{ url_for('static', filename='mascot.png') }}" alt="App Mascot" id="appMascot">
+        </div>
+
+        <div class="section" id="loginSection">
+            <h2>1. Connect to Rocket.Chat Instance</h2>
+            <form id="loginForm">
+                <div>
+                    <label for="rcUrl">Rocket.Chat URL:</label>
+                    <input type="url" id="rcUrl" name="rcUrl" placeholder="https://your.rocket.chat" required>
+                </div>
+                <div>
+                    <label for="rcUsername">Username:</label>
+                    <input type="text" id="rcUsername" name="rcUsername" required>
+                </div>
+                <div>
+                    <label for="rcPassword">Password:</label>
+                    <input type="password" id="rcPassword" name="rcPassword" required>
+                </div>
+                <button type="submit" id="connectButton">Connect & List Channels</button>
+            </form>
+        </div>
+        
+        </div>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
