@@ -33,7 +33,7 @@ def index():
 
 @app.route('/connect_and_enumerate', methods=['POST'])
 async def connect_and_enumerate_channels_route():
-    data = await request.get_json()
+    data = request.get_json()
     url = data.get('url')
     username = data.get('username')
     password = data.get('password')
