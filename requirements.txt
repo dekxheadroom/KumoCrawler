@@ -1,5 +1,4 @@
-Flask[async]
+Quart
 playwright>=1.30
 python-dotenv
-gunicorn
-gevent
+uvicorn
