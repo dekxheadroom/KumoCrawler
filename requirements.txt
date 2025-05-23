@@ -1,0 +1,4 @@
+Flask>=2.0
+playwright>=1.30
+python-dotenv
+nest_asyncio

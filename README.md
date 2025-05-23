@@ -38,3 +38,80 @@ This application allows users to log into a publicly accessible Rocket.Chat inst
 ├── requirements.txt      # Python dependencies
 ├── .env.example          # Example for environment variables
 └── README.md             # This file
+
+## Setup and Running
+
+**1. Prerequisites:**
+    * Docker installed and running.
+    * A web browser for inspecting elements if you need to adjust selectors.
+
+**2. Configuration (Optional Environment Variables):**
+    * You can create a `.env` file (copy from `.env.example`) for Flask settings, though defaults are provided.
+    ```
+    FLASK_APP=app.py
+    FLASK_ENV=development # Change to 'production' for actual deployment
+    # FLASK_RUN_HOST=0.0.0.0 # Default in Dockerfile CMD
+    # FLASK_RUN_PORT=5000   # Default in Dockerfile EXPOSE
+    ```
+
+**3. Build the Docker Image:**
+    ```bash
+    docker build -t rocketchat-scraper .
+    ```
+
+**4. Run the Docker Container:**
+    ```bash
+    docker run -p 5000:5000 --rm rocketchat-scraper
+    ```
+    * `--rm` automatically removes the container when it exits.
+    * The application will be accessible at `http://localhost:5000`.
+
+## How to Use
+
+1.  Open your web browser and navigate to `http://localhost:5000`.
+2.  Enter the full URL of the Rocket.Chat instance (e.g., `https://chat.techhaven.to`).
+3.  Enter your username and password for that Rocket.Chat instance.
+4.  Click "Connect & List Channels". The application will attempt to log in and enumerate channels.
+    * You'll see status updates on the page.
+    * If successful, a list of channels will appear.
+5.  Choose your scraping depth:
+    * "Scrape Entire History (1 channel max)"
+    * "Scrape Last 3 Months (3 channels max)"
+6.  Select the channel(s) using the checkboxes according to the chosen depth. The UI will enforce limits.
+7.  Click "Start Scraping". This process can take time, especially for large histories.
+8.  Once scraping is complete, a download link for the JSON file will appear.
+
+## Customizing CSS Selectors
+
+If the scraper fails to log in, list channels, or find messages, the most likely cause is that the CSS selectors in `scraper_logic.py` do not match the HTML structure of your target Rocket.Chat site.
+
+1.  Open your target Rocket.Chat site in a regular browser.
+2.  Use your browser's Developer Tools (usually F12, then "Inspect Element" or "Elements" tab).
+3.  Manually perform the actions the scraper tries to do (login, find channel list, open a channel, find messages).
+4.  Identify the correct CSS selectors for:
+    * Username input field
+    * Password input field
+    * Login button
+    * A unique element visible only *after* successful login (for login verification)
+    * Channel list items (and the channel name/link within them)
+    * Message list container
+    * Individual message elements
+    * Sender, text, and timestamp elements within each message
+5.  Update these selectors in the `SELECTORS` dictionary within `scraper_logic.py`.
+
+Good luck, and scrape responsibly!
+
+.env.example
+
+# Flask Environment Variables (Optional - defaults are set if not present)
+# Rename this file to .env and modify as needed.
+
+# The entry point of your Flask application
+FLASK_APP=app.py
+
+# Set to 'development' for debug mode, 'production' for production
+FLASK_ENV=development
+
+# Host and Port (already configured in Dockerfile CMD and EXPOSE, but can be set here for local dev without Docker)
+# FLASK_RUN_HOST=0.0.0.0
+# FLASK_RUN_PORT=5000
