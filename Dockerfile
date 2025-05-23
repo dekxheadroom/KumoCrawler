@@ -14,13 +14,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # If you needed other browsers, you could add:
 # RUN playwright install firefox webkit --with-deps
 
-# Environment variables (can be overridden at runtime)
-ENV FLASK_APP=app.py
-ENV FLASK_ENV=development
-ENV FLASK_DEBUG=1
-ENV FLASK_RUN_HOST=0.0.0.0
-ENV FLASK_RUN_PORT=5000
-
 # Expose port Flask will run on
 EXPOSE 5000
 
