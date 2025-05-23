@@ -98,6 +98,8 @@ async def get_page(queue=None):
 
         await log_update(queue, "dev", "Opening new page...")
         page_obj = await context_obj.new_page()
+        await log_update(queue, "dev", f"Value of page_obj after new_page(): {type(page_obj)}")
+        
         if not page_obj:
             await log_update(queue, "error", "CRITICAL: context.new_page() returned None.")
             # Attempt to close context if page creation fails
