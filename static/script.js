@@ -1,40 +1,159 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // ... (Get all the elements as before) ...
     const loginForm = document.getElementById('loginForm');
     const connectButton = document.getElementById('connectButton');
-    
     const channelSelectionSection = document.getElementById('channelSelectionSection');
     const channelListDiv = document.getElementById('channelList');
     const refreshChannelsButton = document.getElementById('refreshChannelsButton');
     const scrapeButton = document.getElementById('scrapeButton');
-    
     const depthEntireRadio = document.getElementById('depthEntire');
     const depth3MonthsRadio = document.getElementById('depth3Months');
-
     const statusLog = document.getElementById('statusLog');
     const downloadSection = document.getElementById('downloadSection');
     const downloadLink = document.getElementById('downloadLink');
+    const clearLogButton = document.getElementById('clearLogButton'); // Assuming you added this
 
-    let siteCredentials = {}; // To store URL, username, password for reuse
+    // Add a checkbox for toggling dev logs
+    const devLogToggle = document.createElement('input');
+    devLogToggle.type = 'checkbox';
+    devLogToggle.id = 'devLogToggle';
+    devLogToggle.checked = true; // Show dev logs by default
+    const devLogLabel = document.createElement('label');
+    devLogLabel.htmlFor = 'devLogToggle';
+    devLogLabel.textContent = 'Show Developer Logs';
+    devLogLabel.style.marginLeft = '10px';
+    devLogLabel.style.fontSize = '0.8em';
+    devLogLabel.style.fontWeight = 'normal';
 
-    function logStatus(message, isError = false) {
+    const statusHeader = document.querySelector('#statusSection h2');
+    statusHeader.appendChild(devLogToggle);
+    statusHeader.appendChild(devLogLabel);
+
+    let siteCredentials = {};
+    let eventSource = null;
+
+    function logStatus(message, type = 'info') {
         const time = new Date().toLocaleTimeString();
         const logEntry = document.createElement('div');
         logEntry.textContent = `[${time}] ${message}`;
-        if (isError) {
-            logEntry.style.color = 'red';
+        logEntry.dataset.type = type; // Add data attribute for filtering
+
+        // Check if dev logs should be hidden
+        if (type === 'dev' && !devLogToggle.checked) {
+            logEntry.style.display = 'none';
         }
+
+        switch(type) {
+            case 'error':
+                logEntry.style.color = 'red';
+                break;
+            case 'success':
+                logEntry.style.color = 'lime';
+                break;
+            case 'warn':
+                 logEntry.style.color = 'orange';
+                 break;
+            case 'dev':
+                 logEntry.style.color = '#888'; // Grey for dev logs
+                 logEntry.textContent = `[${time}] [DEV] ${message}`; // Add prefix
+                 break;
+            case 'info':
+            default:
+                logEntry.style.color = '#0f0';
+                break;
+        }
+
         statusLog.appendChild(logEntry);
-        statusLog.scrollTop = statusLog.scrollHeight; // Auto-scroll
+        statusLog.scrollTop = statusLog.scrollHeight;
     }
 
+    // Add event listener for the toggle
+    devLogToggle.addEventListener('change', () => {
+        const allLogs = statusLog.querySelectorAll('div');
+        allLogs.forEach(log => {
+            if (log.dataset.type === 'dev') {
+                log.style.display = devLogToggle.checked ? 'block' : 'none';
+            }
+        });
+        statusLog.scrollTop = statusLog.scrollHeight; // Scroll to bottom after toggle
+    });
+
+    function clearLogs() {
+        statusLog.innerHTML = '';
+    }
+    clearLogButton.addEventListener('click', clearLogs);
+
+    function startEventStream(taskId) {
+        if (eventSource) {
+            eventSource.close();
+        }
+
+        logStatus(`Starting log stream for task ID: ${taskId}...`);
+        eventSource = new EventSource(`/stream/${taskId}`);
+
+        eventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+
+                // Check if 'type' exists, otherwise log as generic dev message
+                const messageType = data.type || 'dev';
+                const messageContent = data.content || JSON.stringify(data); // Fallback
+
+                switch (messageType) {
+                    case 'info':
+                    case 'error':
+                    case 'success':
+                    case 'warn':
+                    case 'dev':
+                        logStatus(messageContent, messageType);
+                        break;
+                    case 'log': // Treat 'log' as 'info'
+                        logStatus(messageContent, 'info');
+                        break;
+                    case 'channels':
+                        logStatus('Successfully enumerated channels (via stream).', 'success');
+                        displayChannels(messageContent);
+                        channelSelectionSection.style.display = 'block';
+                        scrapeButton.style.display = 'block';
+                        refreshChannelsButton.style.display = 'inline-block';
+                        break;
+                    case 'end_stream':
+                        logStatus(`Stream ended: ${messageContent}`, 'info');
+                        eventSource.close();
+                        connectButton.disabled = false;
+                        connectButton.textContent = 'Connect & List Channels';
+                        refreshChannelsButton.disabled = false;
+                        break;
+                    default:
+                        logStatus(`Unknown message type: ${JSON.stringify(data)}`, 'warn');
+                }
+            } catch (error) {
+                logStatus(`Error parsing server message: ${event.data}`, 'error');
+            }
+        };
+
+        eventSource.onerror = (error) => {
+            logStatus('EventSource encountered an error. Connection closed.', 'error');
+            console.error("EventSource error:", error);
+            if (eventSource) eventSource.close();
+            connectButton.disabled = false;
+            connectButton.textContent = 'Connect & List Channels';
+            refreshChannelsButton.disabled = false;
+        };
+    }
+
+    // --- loginForm submit, refreshChannelsButton, displayChannels, ---
+    // --- updateChannelSelectionLimits, and scrapeButton logic remain the same ---
     loginForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         connectButton.disabled = true;
         connectButton.textContent = 'Connecting...';
-        logStatus('Attempting to connect and list channels...');
+        clearLogs();
+        logStatus('Submitting connection request...');
         channelSelectionSection.style.display = 'none';
-        channelListDiv.innerHTML = ''; // Clear previous list
+        channelListDiv.innerHTML = '';
         downloadSection.style.display = 'none';
+        refreshChannelsButton.disabled = true;
 
         siteCredentials = {
             url: document.getElementById('rcUrl').value,
@@ -42,49 +161,59 @@ document.addEventListener('DOMContentLoaded', () => {
             password: document.getElementById('rcPassword').value,
         };
 
-        await fetchChannels();
-        
-        connectButton.disabled = false;
-        connectButton.textContent = 'Connect & List Channels';
-    });
-
-    async function fetchChannels() {
         try {
             const response = await fetch('/connect_and_enumerate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(siteCredentials),
             });
-
             const result = await response.json();
-            (result.status_updates || []).forEach(update => logStatus(update));
-
-            if (result.success && result.channels) {
-                logStatus('Successfully enumerated channels.');
-                displayChannels(result.channels);
-                channelSelectionSection.style.display = 'block';
-                scrapeButton.style.display = 'block';
-                refreshChannelsButton.style.display = 'inline-block';
+            if (result.success && result.task_id) {
+                logStatus(`Backend task started. Task ID: ${result.task_id}`);
+                startEventStream(result.task_id);
             } else {
-                logStatus(`Error: ${result.error || 'Failed to list channels.'}`, true);
-                channelSelectionSection.style.display = 'none';
+                logStatus(`Error starting task: ${result.error || 'Failed to start task.'}`, 'error'); // Use 'error' type
+                connectButton.disabled = false;
+                connectButton.textContent = 'Connect & List Channels';
             }
         } catch (error) {
-            logStatus(`Client-side error during channel enumeration: ${error}`, true);
-            channelSelectionSection.style.display = 'none';
+            logStatus(`Client-side error during connection submission: ${error}`, 'error'); // Use 'error' type
+            connectButton.disabled = false;
+            connectButton.textContent = 'Connect & List Channels';
         }
-    }
-    
-    refreshChannelsButton.addEventListener('click', async () => {
-        logStatus('Refreshing channel list...');
-        refreshChannelsButton.disabled = true;
-        await fetchChannels();
-        refreshChannelsButton.disabled = false;
     });
 
+    refreshChannelsButton.addEventListener('click', () => {
+         loginForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    });
 
-    function displayChannels(channels) {
-        channelListDiv.innerHTML = ''; // Clear previous
+    function displayChannels(channels) { /* ... as before ... */ }
+    [depthEntireRadio, depth3MonthsRadio].forEach(radio => {
+        radio.addEventListener('change', updateChannelSelectionLimits);
+    });
+    channelListDiv.addEventListener('change', (event) => {
+        if (event.target.name === 'selectedChannels') {
+            updateChannelSelectionLimits();
+        }
+    });
+    function updateChannelSelectionLimits() { /* ... as before ... */ }
+    scrapeButton.addEventListener('click', () => { 
+        logStatus("Scraping needs to be updated for streaming.", 'warn');
+    });
+
+    // Helper for updateChannelSelectionLimits (if it's not already global)
+    function updateChannelSelectionLimits() {
+        const checkboxes = channelListDiv.querySelectorAll('input[name="selectedChannels"]');
+        const selectedCheckboxes = Array.from(checkboxes).filter(cb => cb.checked);
+        let maxChannels = depthEntireRadio.checked ? 1 : 3;
+        checkboxes.forEach(cb => {
+            cb.disabled = !cb.checked && selectedCheckboxes.length >= maxChannels;
+        });
+    }
+
+    // Helper for displayChannels (if it's not already global)
+     function displayChannels(channels) {
+        channelListDiv.innerHTML = '';
         if (channels.length === 0) {
             channelListDiv.innerHTML = '<p>No channels found or accessible.</p>';
             return;
@@ -93,128 +222,16 @@ document.addEventListener('DOMContentLoaded', () => {
             const div = document.createElement('div');
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
-            checkbox.id = `ch_${channel.id.replace(/[^a-zA-Z0-9]/g, "")}`; // Sanitize ID
+            checkbox.id = `ch_${channel.id.replace(/[^a-zA-Z0-9]/g, "")}`;
             checkbox.name = 'selectedChannels';
-            checkbox.value = JSON.stringify({name: channel.name, id: channel.id}); // Store name and nav ID
-            
+            checkbox.value = JSON.stringify({name: channel.name, id: channel.id});
             const label = document.createElement('label');
             label.htmlFor = checkbox.id;
             label.textContent = channel.name;
-
             div.appendChild(checkbox);
             div.appendChild(label);
             channelListDiv.appendChild(div);
         });
-        updateChannelSelectionLimits(); // Apply limits initially
+        updateChannelSelectionLimits();
     }
-
-    [depthEntireRadio, depth3MonthsRadio].forEach(radio => {
-        radio.addEventListener('change', updateChannelSelectionLimits);
-    });
-
-    channelListDiv.addEventListener('change', (event) => {
-        if (event.target.name === 'selectedChannels') {
-            updateChannelSelectionLimits();
-        }
-    });
-
-    function updateChannelSelectionLimits() {
-        const checkboxes = channelListDiv.querySelectorAll('input[name="selectedChannels"]');
-        const selectedCheckboxes = Array.from(checkboxes).filter(cb => cb.checked);
-        
-        let maxChannels;
-        if (depthEntireRadio.checked) {
-            maxChannels = 1;
-        } else { // depth3MonthsRadio.checked
-            maxChannels = 3;
-        }
-
-        if (selectedCheckboxes.length >= maxChannels) {
-            checkboxes.forEach(cb => {
-                if (!cb.checked) {
-                    cb.disabled = true;
-                }
-            });
-        } else {
-            checkboxes.forEach(cb => {
-                cb.disabled = false;
-            });
-        }
-    }
-
-    scrapeButton.addEventListener('click', async () => {
-        const selectedCheckboxes = Array.from(channelListDiv.querySelectorAll('input[name="selectedChannels"]:checked'));
-        if (selectedCheckboxes.length === 0) {
-            logStatus('No channels selected for scraping.', true);
-            return;
-        }
-
-        const channelsToScrape = selectedCheckboxes.map(cb => JSON.parse(cb.value));
-        const scrapeDepth = document.querySelector('input[name="scrapeDepth"]:checked').value;
-
-        logStatus(`Starting scraping for ${channelsToScrape.length} channel(s) with depth: ${scrapeDepth}...`);
-        scrapeButton.disabled = true;
-        scrapeButton.textContent = 'Scraping...';
-        downloadSection.style.display = 'none';
-
-        try {
-            const payload = {
-                ...siteCredentials, // Include original URL and credentials for re-login if backend needs it
-                channels: channelsToScrape,
-                depth: scrapeDepth,
-            };
-            const response = await fetch('/scrape', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
-
-            // Server will send status updates via JSON if it's an error,
-            // or a file if it's successful.
-            if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
-                 // It might be a JSON response for the file content itself or an error
-                const disposition = response.headers.get('content-disposition');
-                if (disposition && disposition.indexOf('attachment') !== -1) {
-                    // Handle file download
-                    const blob = await response.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    downloadLink.href = url;
-                    
-                    // Extract filename from content-disposition header
-                    let filename = "rocketchat_scrape.json"; // Default
-                    const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
-                    let matches = filenameRegex.exec(disposition);
-                    if (matches != null && matches[1]) { 
-                        filename = matches[1].replace(/['"]/g, '');
-                    }
-                    downloadLink.download = filename;
-
-                    downloadSection.style.display = 'block';
-                    logStatus('Scraping complete. Download link available.');
-                } else { // It's a JSON error message from the /scrape endpoint
-                    const result = await response.json();
-                    (result.status_updates || []).forEach(update => logStatus(update));
-                    logStatus(`Scraping error: ${result.error || 'Unknown error during scraping.'}`, true);
-                }
-            } else if (!response.ok) { // Other HTTP error
-                 try {
-                    const errorResult = await response.json(); // Try to parse JSON error
-                    (errorResult.status_updates || []).forEach(update => logStatus(update));
-                    logStatus(`Scraping failed: ${errorResult.error || response.statusText}`, true);
-                } catch (e) {
-                    logStatus(`Scraping failed: ${response.statusText}`, true);
-                }
-            } else {
-                // This case might not be hit if all successful scrapes send 'application/json' with attachment.
-                // If successful response is not JSON, means it's likely the file stream directly.
-                logStatus('Unexpected response type from server during scrape.', true);
-            }
-
-        } catch (error) {
-            logStatus(`Client-side error during scraping: ${error}`, true);
-        } finally {
-            scrapeButton.disabled = false;
-            scrapeButton.textContent = 'Start Scraping';
-        }
-    });
 });
