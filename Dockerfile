@@ -24,5 +24,5 @@ ENV FLASK_RUN_PORT=5000
 # Expose port Flask will run on
 EXPOSE 5000
 
-# Command to run the application using Uvicorn and the a2wsgi adapter
-CMD ["uvicorn", "asgi:asgi_app", "--host", "0.0.0.0", "--port", "5000"]
+# Command to run the application using Gunicorn with gevent workers
+CMD ["gunicorn", "--workers", "4", "--worker-class", "gevent", "--bind", "0.0.0.0:5000", "app:app"]
