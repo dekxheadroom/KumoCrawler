@@ -10,7 +10,7 @@
     <div class="container">
         <h1>KumoCrawler</h1>
         <div class="mascot-container">
-            <img src="{{ url_for('static', filename='mascot.jpg') }}" alt="App Mascot" id="appMascot">
+            <img src="{{ url_for('static', filename='mascot.png') }}" alt="App Mascot" id="appMascot">
         </div>
 
         <div class="section" id="loginSection">
@@ -31,15 +31,50 @@
                 <button type="submit" id="connectButton">Connect & List Channels</button>
             </form>
         </div>
-        
-        </div>
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
 
-    <div class="section" id="statusSection">
+        <div class="section" id="channelSelectionSection" style="display:none;">
+            <h2>2. Select Channels & Scraping Depth</h2>
+            <div>
+                <h3>Scraping Depth:</h3>
+                <input type="radio" id="depthEntire" name="scrapeDepth" value="entire_history" checked>
+                <label for="depthEntire">Scrape Entire History (Max 1 channel)</label><br>
+                <input type="radio" id="depth3Months" name="scrapeDepth" value="3months">
+                <label for="depth3Months">Scrape Last 3 Months (Max 3 channels)</label>
+            </div>
+            
+            <div id="channelListContainer">
+                <h3>Available Channels:</h3>
+                <button type="button" id="refreshChannelsButton" style="display:none;">Refresh Channel List</button>
+                <div id="channelList">
+                    </div>
+            </div>
+            <button type="button" id="scrapeButton" style="display:none;">Start Scraping</button>
+        </div>
+        
+        <div class="section" id="statusSection">
             <h2>Status & Logs <button type="button" id="clearLogButton" style="font-size: 0.7em; padding: 3px 6px; float: right;">Clear</button></h2>
             <pre id="statusLog"></pre>
         </div>
 
+        <div class="section" id="downloadSection" style="display:none;">
+            <h2>3. Download Scraped Data</h2>
+            <a id="downloadLink" href="#" download>Download JSON File</a>
+        </div>
 
+    </div>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script>
+        // Ensure this runs after the button exists. Placing it here or in DOMContentLoaded is fine.
+        document.addEventListener('DOMContentLoaded', () => {
+             const clearBtn = document.getElementById('clearLogButton');
+             if(clearBtn) { // Check if it exists before adding listener
+                clearBtn.addEventListener('click', () => {
+                    document.getElementById('statusLog').innerHTML = '';
+                });
+             } else {
+                console.error("Clear Log Button not found!");
+             }
+        });
+    </script>
 </body>
 </html>
