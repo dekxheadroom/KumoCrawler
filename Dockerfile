@@ -24,5 +24,5 @@ ENV FLASK_RUN_PORT=5000
 # Expose port Flask will run on
 EXPOSE 5000
 
-# Command to run the application using Hypercorn ASGI server
-CMD ["hypercorn", "app:app", "-b", "0.0.0.0:5000"]
+# Command to run the application using Uvicorn ASGI server
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5000"]
