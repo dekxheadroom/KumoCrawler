@@ -2,3 +2,4 @@ Flask[async]
 playwright>=1.30
 python-dotenv
 uvicorn
+a2wsgi
