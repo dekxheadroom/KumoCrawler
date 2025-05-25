@@ -155,11 +155,11 @@ async def login_and_enumerate_task(url, username, password, log_queue):
         # --- Setup Event Handlers ---
         # (This section should be fine as it was, ensure 'page' is valid before this)
         async def handle_console(msg):
-            browser_msg_type = msg.type().lower()
+            browser_msg_type = msg.type.lower()
             log_type = "dev"
             if browser_msg_type == 'error': log_type = 'warn'
             elif browser_msg_type == 'warning': log_type = 'warn'
-            await log_update(log_queue, log_type, f"Browser: [{msg.type()}] {msg.text()}")
+            await log_update(log_queue, log_type, f"Browser: [{msg.type.upper()}] {msg.text()}")
         page.on("console", handle_console)
 
         async def handle_response(response):
