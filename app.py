@@ -144,7 +144,10 @@ async def stream_logs(task_id):
             # --- Handle Scrape Results ---
             if log_entry.get("type") == "scrape_result":
                 tasks[task_id]['results_data'].append(log_entry.get("content"))
-                yield f"data: {json.dumps({'type': 'info', 'content': f'Received results for {log_entry["content"]["channel_name"]}'})}\n\n"
+                channel_name = log_entry["content"]["channel_name"]
+                content_str = f"Received results for {channel_name}"
+                data_to_send = {'type': 'info', 'content': content_str}
+                yield f"data: {json.dumps(data_to_send)}\n\n"
                 continue # Don't send full results down stream, just info
 
             # --- Handle 'All Done' for Scraping ---
