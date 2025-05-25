@@ -1,3 +1,5 @@
+# scraper_logic.py
+
 import asyncio
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
 from datetime import datetime, timedelta
@@ -6,7 +8,7 @@ import re
 import json
 import traceback # For explicit traceback printing
 
-# --- SELECTORS (No change from last version) ---
+# --- SELECTORS (Ensure these match your target site) ---
 SELECTORS = {
     "username_field": 'input[name="emailOrUsername"]',
     "password_field": 'input[name="pass"]',
@@ -19,9 +21,10 @@ SELECTORS = {
     "message_item_li": 'li.message',
     "message_sender": '.user-card-message__user-name',
     "message_text": '.message-body-wrapper .body',
-    "message_timestamp": '.message-timestamp',
+    "message_timestamp": '.message-timestamp', # Added for scraping
     "room_title_header": 'header .rcx-room-header__name',
-    "scrollable_message_container": '.messages-box .wrapper',
+    "scrollable_message_container": '.messages-box .wrapper', # Used for scrolling
+    "loading_indicator": '.rcx-loading, .loading-animation', # Example - adjust if needed
 }
 
 playwright_instance = None
@@ -38,280 +41,261 @@ async def log_update(queue, message_type, content):
 
 async def init_browser(queue=None):
     global playwright_instance, browser
-    try:
-        if not playwright_instance:
-            await log_update(queue, "info", "Starting Playwright...")
-            playwright_instance = await async_playwright().start()
-            if not playwright_instance:
-                await log_update(queue, "error", "CRITICAL: async_playwright().start() returned None.")
-                raise PlaywrightError("Playwright instance is None after start(). Cannot continue.")
+    if not playwright_instance:
+        await log_update(queue, "info", "Starting Playwright...")
+        playwright_instance = await async_playwright().start()
+    if not browser or not browser.is_connected():
+        await log_update(queue, "info", "Launching browser...")
+        browser = await playwright_instance.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
+    return browser
 
-        if not browser or not browser.is_connected():
-            await log_update(queue, "info", "Launching browser...")
-            if not playwright_instance: # Should be caught above, defensive check
-                 raise PlaywrightError("Playwright instance became None before launching browser.")
-            browser = await playwright_instance.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
-            if not browser:
-                await log_update(queue, "error", "CRITICAL: playwright_instance.chromium.launch() returned None.")
-                raise PlaywrightError("Browser is None after launch. Cannot continue.")
-            await log_update(queue, "dev", f"Browser launched: {browser.version}")
-        return browser
-    except Exception as e:
-        # Log the error and full traceback here, as init_browser is critical
-        print(f"\n!!! CRITICAL ERROR IN init_browser: {str(e)}")
-        traceback.print_exc()
-        print(f"!!!\n")
-        await log_update(queue, "error", f"Critical error during browser initialization: {e}")
-        raise # Re-raise to be caught by login_and_enumerate_task or stop the process
-
-async def close_browser(): # Keep your existing close_browser function
+async def close_browser():
     global playwright_instance, browser
     if browser and browser.is_connected():
-        await log_update(None, "dev", "Attempting to close browser...") # No queue on shutdown typically
+        await log_update(None, "dev", "Closing browser...")
         await browser.close()
         browser = None
-        await log_update(None, "dev", "Browser closed.")
     if playwright_instance:
-        await log_update(None, "dev", "Attempting to stop Playwright instance...")
+        await log_update(None, "dev", "Stopping Playwright instance...")
         await playwright_instance.stop()
         playwright_instance = None
-        await log_update(None, "dev", "Playwright instance stopped.")
-    print("Playwright closed (from close_browser function).")
-
+    print("Playwright closed.")
 
 async def get_page(queue=None):
-    global browser # browser is global
-    page_obj = None # Initialize to None
-    context_obj = None # Initialize to None
+    """Gets a new page within a new context, reusing the global browser."""
+    b = await init_browser(queue)
+    context = None
+    page = None
     try:
-        b = await init_browser(queue) # init_browser now raises on failure
-        # 'b' should be a valid browser object here or an exception would have been raised
-
         await log_update(queue, "dev", "Creating new browser context...")
-        context_obj = await b.new_context(
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36',
+        context = await b.new_context(
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
             viewport={'width': 1280, 'height': 800},
+            java_script_enabled=True, # Ensure JS is enabled
+            ignore_https_errors=True, # Can sometimes help with self-signed certs
         )
-        if not context_obj:
-            await log_update(queue, "error", "CRITICAL: browser.new_context() returned None.")
-            raise PlaywrightError("Browser context is None after new_context(). Cannot continue.")
-
         await log_update(queue, "dev", "Opening new page...")
-        page_obj = await context_obj.new_page()
-        await log_update(queue, "dev", f"Value of page_obj after new_page(): {type(page_obj)}")
-
-        if page_obj: # Only proceed if page_obj is not None itself
-            await log_update(queue, "dev", f"Is 'set_default_timeout' an attribute of page_obj? {hasattr(page_obj, 'set_default_timeout')}")
-            if hasattr(page_obj, 'set_default_timeout'):
-                method_itself = page_obj.set_default_timeout
-                await log_update(queue, "dev", f"Type of page_obj.set_default_timeout: {type(method_itself)}")
-                if method_itself is None:
-                    await log_update(queue, "error", "CRITICAL: page_obj.set_default_timeout IS LITERALLY None!")
-                try:
-                    # Call it, but don't await the direct result for logging if it's None
-                    # This call itself might still need to be async if the method *is* async under the hood
-                    # but our previous log showed its direct result was None.
-                    # The line that causes the error will be the one below.
-                    coroutine_obj_or_none = page_obj.set_default_timeout(30000) # Call it
-                    await log_update(queue, "dev", f"Type of result from set_default_timeout(30000): {type(coroutine_obj_or_none)}")
-                    if coroutine_obj_or_none is None:
-                         await log_update(queue, "error", "CRITICAL: page_obj.set_default_timeout(30000) RETURNED None directly!")
-                    # If it IS a coroutine, we would await it later. If it's None, awaiting it causes the error.
-                except Exception as call_exc:
-                    await log_update(queue, "error", f"Error just CALLING page_obj.set_default_timeout(30000): {call_exc}")
-            else:
-                await log_update(queue, "error", "CRITICAL: page_obj does NOT have 'set_default_timeout' attribute!")
-                await log_update(queue, "dev", f"Attributes of page_obj: {dir(page_obj)}")
-        
-        if not page_obj:
-            await log_update(queue, "error", "CRITICAL: context.new_page() returned None.")
-            # Attempt to close context if page creation fails
-            if context_obj: await context_obj.close()
-            raise PlaywrightError("Page object is None after new_page(). Cannot continue.")
-
-        await log_update(queue, "dev", "Attempting: page_obj.set_default_timeout(30000) (without await)")
-        page_obj.set_default_timeout(30000) # <--- REMOVED 'await'
-        await log_update(queue, "dev", "Successfully called set default timeout.") # Updated log
-        return page_obj
+        page = await context.new_page()
+        page.set_default_timeout(45000) # Increased default timeout
+        await log_update(queue, "dev", "Page created.")
+        return page # Returns page, context stays with it. Page closure will close context.
     except Exception as e:
-        # Log the error and full traceback here, as get_page is critical
         print(f"\n!!! CRITICAL ERROR IN get_page: {str(e)}")
         traceback.print_exc()
-        print(f"!!!\n")
         await log_update(queue, "error", f"Critical error during page creation: {e}")
-        # Attempt to clean up if context or page was partially created
-        if page_obj and not page_obj.is_closed(): await page_obj.close()
-        elif context_obj and not context_obj.is_closed(): await context_obj.close() # if page_obj is None but context existed
-        raise # Re-raise
+        if page: await page.close()
+        if context: await context.close()
+        raise
 
-
-# Your login_and_enumerate_task function (ensure the final except block has traceback.print_exc() as provided before)
-async def login_and_enumerate_task(url, username, password, log_queue):
-    page = None # Initialize page to None
+async def perform_login(page, url, username, password, queue):
+    """Handles the login process on a given page."""
+    await log_update(queue, "info", f"Navigating to {url}...")
     try:
-        # init_browser is called by get_page
-        page = await get_page(log_queue) # Line 76 from your traceback
+        await page.goto(url, wait_until='networkidle', timeout=60000)
+    except PlaywrightError as e:
+        await log_update(queue, "error", f"Navigation Error: {e}")
+        raise # Re-raise to be caught by caller
 
-        # --- Setup Event Handlers ---
-        # (This section should be fine as it was, ensure 'page' is valid before this)
-        async def handle_console(msg):
-            browser_msg_type = msg.type.lower()
-            log_type = "dev"
-            if browser_msg_type == 'error': log_type = 'warn'
-            elif browser_msg_type == 'warning': log_type = 'warn'
-            await log_update(log_queue, log_type, f"Browser: [{msg.type.upper()}] {msg.text}")
-        page.on("console", handle_console)
+    await log_update(queue, "dev", "Filling username...")
+    await page.fill(SELECTORS["username_field"], username, timeout=20000)
+    await page.wait_for_timeout(random.uniform(500, 1000))
+    await log_update(queue, "dev", "Filling password...")
+    await page.fill(SELECTORS["password_field"], password, timeout=20000)
+    await page.wait_for_timeout(random.uniform(500, 1000))
+    await log_update(queue, "info", "Clicking login button...")
+    await page.click(SELECTORS["login_button"], timeout=20000)
 
-        async def handle_response(response):
-            if response.status >= 400:
-                log_level = "error" if response.status >= 500 else "warn"
-                await log_update(log_queue, log_level, f"HTTP {response.status}: {response.request.method} {response.url}")
-        page.on("response", handle_response)
-        await log_update(log_queue, "dev", "Browser & Network logging enabled.")
-        # --- End Event Handlers ---
-
-        # --- Navigation with Error Handling ---
-        await log_update(log_queue, "info", f"Navigating to {url}...")
-        # ... (rest of your navigation, form filling, login check, enumeration logic) ...
-        # ... (ensure it's the version with detailed try/except blocks we developed) ...
-        # For example, the navigation block:
-        try:
-            response = await page.goto(url, wait_until='networkidle', timeout=60000)
-            if response and not response.ok:
-                await log_update(log_queue, "error", f"Navigation Failed: Received HTTP {response.status} for {url}")
-                await log_update(log_queue, "end_stream", "Process failed (Navigation Error).")
-                return
-        except PlaywrightTimeoutError:
-            await log_update(log_queue, "error", f"Navigation Timed Out: Page {url} took too long to load.")
-            await log_update(log_queue, "end_stream", "Process failed (Navigation Timeout).")
-            return
-        except PlaywrightError as e: 
-            await log_update(log_queue, "error", f"Navigation Error (Playwright): Could not load {url}. Is URL correct? Details: {e}")
-            await log_update(log_queue, "end_stream", "Process failed (Navigation Error).")
-            return
-        except Exception as e: 
-            await log_update(log_queue, "error", f"Unexpected Navigation Error for {url}. Details: {e}")
-            await log_update(log_queue, "end_stream", "Process failed (Navigation Error).")
-            return
-        await page.wait_for_timeout(random.uniform(1000, 2000))
-        
-        # IMPORTANT: Continue with the rest of the form filling, login check, etc.
-        # This has been truncated for brevity, use your full existing logic here.
-        #await log_update(log_queue, "info", "Dummy step: If navigation succeeds, other actions follow.")
-        # ...
-
-        #await log_update(log_queue, "end_stream", "Process nominally complete (or failed earlier).")
-
-    # --- Filling forms (Add try/except for robustness) ---
+    await log_update(queue, "dev", "Waiting for login outcome...")
     try:
-        await log_update(log_queue, "dev", "Filling username...")
-        await page.fill(SELECTORS["username_field"], username, timeout=15000)
-        await page.wait_for_timeout(random.uniform(500, 1000))
-
-        await log_update(log_queue, "dev", "Filling password...")
-        await page.fill(SELECTORS["password_field"], password, timeout=15000)
-        await page.wait_for_timeout(random.uniform(500, 1000))
-
-        await log_update(log_queue, "info", "Clicking login button...")
-        await page.click(SELECTORS["login_button"], timeout=15000)
-        await log_update(log_queue, "dev", "Login button clicked. Waiting for outcome...")
-
-    except PlaywrightTimeoutError as e:
-        await log_update(log_queue, "error", f"Timeout Error: Could not find or fill form fields. Check selectors ({e}).")
-        await log_update(log_queue, "end_stream", "Process failed (Form Error).")
-        return
-    except Exception as e: # Catch other errors during form interaction
-        await log_update(log_queue, "error", f"Error during form interaction: {e}")
-        await log_update(log_queue, "end_stream", "Process failed (Form Error).")
-        return
-    # --- End Filling forms ---
-
-    # --- Check for Login Success OR Failure (Enhanced) ---
-    try:
-        await log_update(log_queue, "dev", f"Waiting for success ('{SELECTORS['login_success_indicator']}') OR error ('{SELECTORS['login_error_indicator']}')")
         await page.wait_for_selector(
             f'{SELECTORS["login_success_indicator"]}, {SELECTORS["login_error_indicator"]}',
             state="visible",
-            timeout=25000
+            timeout=30000
         )
-
         error_element = await page.query_selector(SELECTORS["login_error_indicator"])
         if error_element:
-            try:
-                error_text = await error_element.inner_text()
-            except Exception:
-                error_text = "Login Error element found, but could not get text."
-            await log_update(log_queue, "error", f"Login Failed: {error_text.strip()}. Please check your username and password.")
-            await log_update(log_queue, "end_stream", "Process failed (Login Error).")
-            return
+            raise PlaywrightError("Login Failed: Check credentials or error indicator selector.")
 
-        success_element = await page.query_selector(SELECTORS["login_success_indicator"])
-        if success_element:
-             await log_update(log_queue, "success", "Login successful.")
-             # --- If login is successful, THEN enumerate channels ---
-             try:
-                await log_update(log_queue, "info", "Enumerating channels...")
-                channels_data = []
-                # ... (Your existing channel enumeration logic here) ...
-                # Example from before:
-                await page.wait_for_selector(SELECTORS["channel_list_container"], state="visible", timeout=20000)
-                channel_elements = await page.query_selector_all(SELECTORS["channel_list_container"])
-                if not channel_elements:
-                    await log_update(log_queue, "error", "No channel elements found after login. Check selector.")
-                else:
-                    base_url_match = re.match(r"^(https://[^/]+)", page.url)
-                    base_url = base_url_match.group(1) if base_url_match else url
-                    for el in channel_elements:
-                        name_el = await el.query_selector(SELECTORS["channel_name_in_item"])
-                        if name_el:
-                            name = (await name_el.inner_text()).strip()
-                            href = await el.get_attribute('href')
-                            if not href:
-                                link_tag = await el.query_selector('a')
-                                href = await link_tag.get_attribute('href') if link_tag else None
-                            if name and href:
-                                nav_id = base_url + href if href.startswith('/') else href
-                                channels_data.append({"name": name, "id": nav_id})
-                                await log_update(log_queue, "dev", f"Found channel: {name}")
-                if channels_data:
-                    await log_update(log_queue, "info", f"Found {len(channels_data)} channels.")
-                    await log_update(log_queue, "channels", channels_data)
-                else:
-                    await log_update(log_queue, "warn", "Could not find channel names or links after login.")
-             except PlaywrightTimeoutError:
-                await log_update(log_queue, "error", "Timeout Error: Could not find channel list after login. Check selectors.")
-             except Exception as e_enum:
-                await log_update(log_queue, "error", f"Error enumerating channels after login: {e_enum}")
-        else: # Login outcome unclear
-            await log_update(log_queue, "error", "Login outcome unclear: Neither success nor error indicator found after wait.")
+        await log_update(queue, "success", "Login successful (during scrape).")
+        return True
     except PlaywrightTimeoutError:
-         await log_update(log_queue, "error", "Login Timed Out: Page didn't show success or error after clicking login. Check credentials, selectors, or site availability.")
-    # --- End Login Check ---
+        raise PlaywrightError("Login Timed Out: Could not confirm login success or failure.")
 
-    await log_update(log_queue, "end_stream", "Process complete.") # New end message
+# Modified login_and_enumerate_task - simplified as login is now separate
+async def login_and_enumerate_task(url, username, password, log_queue):
+    page = None
+    try:
+        page = await get_page(log_queue)
+        await perform_login(page, url, username, password, log_queue) # Use the login helper
 
-    except PlaywrightError as e: 
-        error_message = f"A Playwright initialization or page creation error occurred: {str(e)}."
-        print(f"\n!!! PLAYWRIGHT SETUP ERROR IN login_and_enumerate_task: {str(e)}")
-        traceback.print_exc() # Print traceback for these critical errors
-        print(f"!!!\n")
-        await log_update(log_queue, "error", error_message)
-        await log_update(log_queue, "end_stream", "Process failed (Playwright Setup).")
-    
-    except Exception as e: 
-        error_message = f"An unexpected error occurred in login_and_enumerate_task: {str(e)}."
-        print(f"\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        print(f"!!! UNEXPECTED ERROR IN login_and_enumerate_task: {str(e)}")
-        traceback.print_exc() # This was the one you added, ensure it's here
-        print(f"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
-        await log_update(log_queue, "error", error_message)
-        await log_update(log_queue, "end_stream", "Process failed.")
-    finally:
-        if page and not page.is_closed():
-            await log_update(log_queue, "dev", "Closing page context for this task (finally block)...")
-            try:
-                await page.context.close()
-            except Exception as e:
-                await log_update(log_queue, "warn", f"Error closing page context in finally: {e}")
+        await log_update(log_queue, "info", "Enumerating channels...")
+        channels_data = []
+        await page.wait_for_selector(SELECTORS["channel_list_container"], state="visible", timeout=20000)
+        channel_elements = await page.query_selector_all(SELECTORS["channel_list_container"])
+
+        if not channel_elements:
+            await log_update(log_queue, "error", "No channel elements found.")
         else:
-            await log_update(log_queue, "dev", "Page was None or already closed in finally block.")
+            base_url_match = re.match(r"^(https://[^/]+)", page.url)
+            base_url = base_url_match.group(1) if base_url_match else url
+            for el in channel_elements:
+                name_el = await el.query_selector(SELECTORS["channel_name_in_item"])
+                if name_el:
+                    name = (await name_el.inner_text()).strip()
+                    href = await el.get_attribute('href')
+                    if not href:
+                        link_tag = await el.query_selector('a')
+                        href = await link_tag.get_attribute('href') if link_tag else None
+                    if name and href:
+                        # Ensure we build a fully qualified URL for navigation
+                        nav_id = href if href.startswith('http') else base_url + href
+                        channels_data.append({"name": name, "id": nav_id}) # Use full URL as ID
+                        await log_update(log_queue, "dev", f"Found channel: {name} ({nav_id})")
+
+        if channels_data:
+            await log_update(log_queue, "info", f"Found {len(channels_data)} channels.")
+            await log_update(log_queue, "channels", channels_data)
+        else:
+            await log_update(log_queue, "warn", "Could not find any channels.")
+
+        await log_update(log_queue, "end_stream", "Enumeration complete.")
+
+    except (PlaywrightError, PlaywrightTimeoutError) as e:
+        error_message = f"A Playwright error occurred: {str(e)}"
+        print(f"!!! PLAYWRIGHT ERROR: {str(e)}"); traceback.print_exc()
+        await log_update(log_queue, "error", error_message)
+        await log_update(log_queue, "end_stream", "Process failed (Playwright Error).")
+    except Exception as e:
+        error_message = f"An unexpected error occurred: {str(e)}."
+        print(f"!!! UNEXPECTED ERROR: {str(e)}"); traceback.print_exc()
+        await log_update(log_queue, "error", error_message)
+        await log_update(log_queue, "end_stream", "Process failed (Unexpected Error).")
+    finally:
+        if page: await page.context.close() # Close context/page
+
+# --- NEW SCRAPING FUNCTION ---
+async def scrape_messages_task(url, username, password, channel_url, depth, log_queue):
+    page = None
+    scraped_data = []
+    try:
+        page = await get_page(log_queue)
+        await perform_login(page, url, username, password, log_queue)
+
+        await log_update(log_queue, "info", f"Navigating to channel: {channel_url}")
+        await page.goto(channel_url, wait_until='networkidle', timeout=60000)
+        await page.wait_for_selector(SELECTORS["room_title_header"], timeout=30000)
+        channel_name = await page.inner_text(SELECTORS["room_title_header"])
+        await log_update(log_queue, "success", f"Entered channel: {channel_name.strip()}")
+        await page.wait_for_timeout(2000) # Wait for messages to maybe load
+
+        await log_update(log_queue, "info", "Starting message scraping...")
+        await page.wait_for_selector(SELECTORS["scrollable_message_container"], state="visible", timeout=20000)
+        scroll_container = page.locator(SELECTORS["scrollable_message_container"])
+
+        three_months_ago = datetime.now() - timedelta(days=90)
+        seen_message_ids = set()
+        keep_scrolling = True
+        consecutive_no_new_messages = 0
+
+        while keep_scrolling:
+            await log_update(log_queue, "dev", "Looking for messages...")
+            messages_found_this_pass = 0
+            message_elements = await page.query_selector_all(SELECTORS["message_item_li"])
+
+            if not message_elements:
+                 await log_update(log_queue, "warn", "No message elements found on this pass.")
+                 consecutive_no_new_messages += 1
+                 if consecutive_no_new_messages > 5: # Stop if nothing found 5 times
+                     await log_update(log_queue, "warn", "No messages found for several scrolls. Stopping.")
+                     break
+                 await page.wait_for_timeout(3000) # Wait a bit longer
+                 continue
+
+            consecutive_no_new_messages = 0 # Reset if we found *any* elements
+
+            for msg_element in reversed(message_elements): # Process oldest first in view
+                msg_id = await msg_element.get_attribute('id')
+                if not msg_id or msg_id in seen_message_ids:
+                    continue # Skip if no ID or already seen
+
+                seen_message_ids.add(msg_id)
+                messages_found_this_pass += 1
+
+                try:
+                    sender_el = await msg_element.query_selector(SELECTORS["message_sender"])
+                    text_el = await msg_element.query_selector(SELECTORS["message_text"])
+                    ts_el = await msg_element.query_selector(SELECTORS["message_timestamp"])
+
+                    sender = await sender_el.inner_text() if sender_el else "Unknown Sender"
+                    text = await text_el.inner_text() if text_el else ""
+                    ts_text = await ts_el.get_attribute('title') if ts_el else "" # Title often has full date
+
+                    # --- Timestamp Parsing (Crucial & Needs Adjustment) ---
+                    msg_time = None
+                    if ts_text:
+                        try:
+                           # Try a common format, *ADJUST THIS* based on your site's HTML
+                           msg_time = datetime.strptime(ts_text, '%I:%M %p, %B %d, %Y')
+                        except ValueError:
+                           await log_update(log_queue, "dev", f"Could not parse timestamp '{ts_text}' with default format. Storing as text.")
+
+                    scraped_data.append({
+                        "id": msg_id,
+                        "sender": sender.strip(),
+                        "text": text.strip(),
+                        "timestamp_raw": ts_text,
+                        "timestamp_dt": msg_time.isoformat() if msg_time else None
+                    })
+
+                    # --- Check Depth ---
+                    if depth == "3months" and msg_time and msg_time < three_months_ago:
+                        await log_update(log_queue, "info", "Reached 3-month limit. Stopping scroll.")
+                        keep_scrolling = False
+                        break # Exit inner loop
+
+                except Exception as parse_err:
+                    await log_update(log_queue, "warn", f"Could not parse message ID {msg_id}: {parse_err}")
+
+            if not keep_scrolling: break # Exit outer loop if limit reached
+
+            if messages_found_this_pass == 0 and len(message_elements) > 0:
+                await log_update(log_queue, "info", "No *new* messages found, might be at the top. Stopping scroll.")
+                break
+
+            await log_update(log_queue, "dev", f"Scraped {len(scraped_data)} total messages. Scrolling up...")
+
+            # --- Scrolling Logic ---
+            try:
+                await page.evaluate(f'document.querySelector("{SELECTORS["scrollable_message_container"]}").scrollTop = 0')
+                await page.wait_for_timeout(random.uniform(2500, 4000)) # Wait longer for content to load
+
+                # Check if a loading indicator appeared/disappeared (optional but good)
+                try:
+                    await page.wait_for_selector(SELECTORS["loading_indicator"], state='visible', timeout=1000)
+                    await page.wait_for_selector(SELECTORS["loading_indicator"], state='hidden', timeout=15000)
+                except PlaywrightTimeoutError:
+                    await log_update(log_queue, "dev", "Loading indicator didn't appear/disappear as expected, continuing.")
+
+                # Add a check: If scroll position doesn't change after scroll, we're likely at top
+                # (More complex JS might be needed for perfect check)
+
+            except Exception as scroll_err:
+                 await log_update(log_queue, "error", f"Error during scrolling: {scroll_err}. Stopping.")
+                 keep_scrolling = False
+
+        await log_update(log_queue, "success", f"Scraping finished. Found {len(scraped_data)} messages.")
+        await log_update(log_queue, "scrape_result", {"channel_name": channel_name.strip(), "messages": scraped_data})
+        await log_update(log_queue, "end_stream", "Scraping complete.")
+
+    except (PlaywrightError, PlaywrightTimeoutError) as e:
+        error_message = f"A Playwright error occurred during scraping: {str(e)}"
+        print(f"!!! PLAYWRIGHT ERROR: {str(e)}"); traceback.print_exc()
+        await log_update(log_queue, "error", error_message)
+        await log_update(log_queue, "end_stream", "Scraping failed (Playwright Error).")
+    except Exception as e:
+        error_message = f"An unexpected error occurred during scraping: {str(e)}."
+        print(f"!!! UNEXPECTED ERROR: {str(e)}"); traceback.print_exc()
+        await log_update(log_queue, "error", error_message)
+        await log_update(log_queue, "end_stream", "Scraping failed (Unexpected Error).")
+    finally:
+        if page: await page.context.close()
