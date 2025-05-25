@@ -159,7 +159,7 @@ async def login_and_enumerate_task(url, username, password, log_queue):
             log_type = "dev"
             if browser_msg_type == 'error': log_type = 'warn'
             elif browser_msg_type == 'warning': log_type = 'warn'
-            await log_update(log_queue, log_type, f"Browser: [{msg.type.upper()}] {msg.text()}")
+            await log_update(log_queue, log_type, f"Browser: [{msg.type.upper()}] {msg.text}")
         page.on("console", handle_console)
 
         async def handle_response(response):
