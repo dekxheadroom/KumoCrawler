@@ -107,14 +107,21 @@ async def get_page(queue=None):
                 await log_update(queue, "dev", f"Type of page_obj.set_default_timeout: {type(method_itself)}")
                 if method_itself is None:
                     await log_update(queue, "error", "CRITICAL: page_obj.set_default_timeout IS LITERALLY None!")
-                # Let's try calling it and see the type of what it returns BEFORE awaiting
                 try:
-                    coroutine_obj = page_obj.set_default_timeout(30000)
-                    await log_update(queue, "dev", f"Type of coroutine_obj from set_default_timeout(30000): {type(coroutine_obj)}")
-                    if coroutine_obj is None:
-                        await log_update(queue, "error", "CRITICAL: page_obj.set_default_timeout(30000) RETURNED None directly!")
+                    # Call it, but don't await the direct result for logging if it's None
+                    # This call itself might still need to be async if the method *is* async under the hood
+                    # but our previous log showed its direct result was None.
+                    # The line that causes the error will be the one below.
+                    coroutine_obj_or_none = page_obj.set_default_timeout(30000) # Call it
+                    await log_update(queue, "dev", f"Type of result from set_default_timeout(30000): {type(coroutine_obj_or_none)}")
+                    if coroutine_obj_or_none is None:
+                         await log_update(queue, "error", "CRITICAL: page_obj.set_default_timeout(30000) RETURNED None directly!")
+                    # If it IS a coroutine, we would await it later. If it's None, awaiting it causes the error.
                 except Exception as call_exc:
                     await log_update(queue, "error", f"Error just CALLING page_obj.set_default_timeout(30000): {call_exc}")
+            else:
+                await log_update(queue, "error", "CRITICAL: page_obj does NOT have 'set_default_timeout' attribute!")
+                await log_update(queue, "dev", f"Attributes of page_obj: {dir(page_obj)}")
         
         if not page_obj:
             await log_update(queue, "error", "CRITICAL: context.new_page() returned None.")
@@ -122,7 +129,9 @@ async def get_page(queue=None):
             if context_obj: await context_obj.close()
             raise PlaywrightError("Page object is None after new_page(). Cannot continue.")
 
-        await page_obj.set_default_timeout(30000)
+        await log_update(queue, "dev", "Attempting: page_obj.set_default_timeout(30000) (without await)")
+        page_obj.set_default_timeout(30000) # <--- REMOVED 'await'
+        await log_update(queue, "dev", "Successfully called set default timeout.") # Updated log
         return page_obj
     except Exception as e:
         # Log the error and full traceback here, as get_page is critical
