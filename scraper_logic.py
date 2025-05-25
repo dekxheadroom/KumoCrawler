@@ -197,11 +197,98 @@ async def login_and_enumerate_task(url, username, password, log_queue):
         
         # IMPORTANT: Continue with the rest of the form filling, login check, etc.
         # This has been truncated for brevity, use your full existing logic here.
-        await log_update(log_queue, "info", "Dummy step: If navigation succeeds, other actions follow.")
+        #await log_update(log_queue, "info", "Dummy step: If navigation succeeds, other actions follow.")
         # ...
 
-        await log_update(log_queue, "end_stream", "Process nominally complete (or failed earlier).")
+        #await log_update(log_queue, "end_stream", "Process nominally complete (or failed earlier).")
 
+    # --- Filling forms (Add try/except for robustness) ---
+    try:
+        await log_update(log_queue, "dev", "Filling username...")
+        await page.fill(SELECTORS["username_field"], username, timeout=15000)
+        await page.wait_for_timeout(random.uniform(500, 1000))
+
+        await log_update(log_queue, "dev", "Filling password...")
+        await page.fill(SELECTORS["password_field"], password, timeout=15000)
+        await page.wait_for_timeout(random.uniform(500, 1000))
+
+        await log_update(log_queue, "info", "Clicking login button...")
+        await page.click(SELECTORS["login_button"], timeout=15000)
+        await log_update(log_queue, "dev", "Login button clicked. Waiting for outcome...")
+
+    except PlaywrightTimeoutError as e:
+        await log_update(log_queue, "error", f"Timeout Error: Could not find or fill form fields. Check selectors ({e}).")
+        await log_update(log_queue, "end_stream", "Process failed (Form Error).")
+        return
+    except Exception as e: # Catch other errors during form interaction
+        await log_update(log_queue, "error", f"Error during form interaction: {e}")
+        await log_update(log_queue, "end_stream", "Process failed (Form Error).")
+        return
+    # --- End Filling forms ---
+
+    # --- Check for Login Success OR Failure (Enhanced) ---
+    try:
+        await log_update(log_queue, "dev", f"Waiting for success ('{SELECTORS['login_success_indicator']}') OR error ('{SELECTORS['login_error_indicator']}')")
+        await page.wait_for_selector(
+            f'{SELECTORS["login_success_indicator"]}, {SELECTORS["login_error_indicator"]}',
+            state="visible",
+            timeout=25000
+        )
+
+        error_element = await page.query_selector(SELECTORS["login_error_indicator"])
+        if error_element:
+            try:
+                error_text = await error_element.inner_text()
+            except Exception:
+                error_text = "Login Error element found, but could not get text."
+            await log_update(log_queue, "error", f"Login Failed: {error_text.strip()}. Please check your username and password.")
+            await log_update(log_queue, "end_stream", "Process failed (Login Error).")
+            return
+
+        success_element = await page.query_selector(SELECTORS["login_success_indicator"])
+        if success_element:
+             await log_update(log_queue, "success", "Login successful.")
+             # --- If login is successful, THEN enumerate channels ---
+             try:
+                await log_update(log_queue, "info", "Enumerating channels...")
+                channels_data = []
+                # ... (Your existing channel enumeration logic here) ...
+                # Example from before:
+                await page.wait_for_selector(SELECTORS["channel_list_container"], state="visible", timeout=20000)
+                channel_elements = await page.query_selector_all(SELECTORS["channel_list_container"])
+                if not channel_elements:
+                    await log_update(log_queue, "error", "No channel elements found after login. Check selector.")
+                else:
+                    base_url_match = re.match(r"^(https://[^/]+)", page.url)
+                    base_url = base_url_match.group(1) if base_url_match else url
+                    for el in channel_elements:
+                        name_el = await el.query_selector(SELECTORS["channel_name_in_item"])
+                        if name_el:
+                            name = (await name_el.inner_text()).strip()
+                            href = await el.get_attribute('href')
+                            if not href:
+                                link_tag = await el.query_selector('a')
+                                href = await link_tag.get_attribute('href') if link_tag else None
+                            if name and href:
+                                nav_id = base_url + href if href.startswith('/') else href
+                                channels_data.append({"name": name, "id": nav_id})
+                                await log_update(log_queue, "dev", f"Found channel: {name}")
+                if channels_data:
+                    await log_update(log_queue, "info", f"Found {len(channels_data)} channels.")
+                    await log_update(log_queue, "channels", channels_data)
+                else:
+                    await log_update(log_queue, "warn", "Could not find channel names or links after login.")
+             except PlaywrightTimeoutError:
+                await log_update(log_queue, "error", "Timeout Error: Could not find channel list after login. Check selectors.")
+             except Exception as e_enum:
+                await log_update(log_queue, "error", f"Error enumerating channels after login: {e_enum}")
+        else: # Login outcome unclear
+            await log_update(log_queue, "error", "Login outcome unclear: Neither success nor error indicator found after wait.")
+    except PlaywrightTimeoutError:
+         await log_update(log_queue, "error", "Login Timed Out: Page didn't show success or error after clicking login. Check credentials, selectors, or site availability.")
+    # --- End Login Check ---
+
+    await log_update(log_queue, "end_stream", "Process complete.") # New end message
 
     except PlaywrightError as e: 
         error_message = f"A Playwright initialization or page creation error occurred: {str(e)}."
