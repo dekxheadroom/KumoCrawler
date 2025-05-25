@@ -99,6 +99,22 @@ async def get_page(queue=None):
         await log_update(queue, "dev", "Opening new page...")
         page_obj = await context_obj.new_page()
         await log_update(queue, "dev", f"Value of page_obj after new_page(): {type(page_obj)}")
+
+        if page_obj: # Only proceed if page_obj is not None itself
+            await log_update(queue, "dev", f"Is 'set_default_timeout' an attribute of page_obj? {hasattr(page_obj, 'set_default_timeout')}")
+            if hasattr(page_obj, 'set_default_timeout'):
+                method_itself = page_obj.set_default_timeout
+                await log_update(queue, "dev", f"Type of page_obj.set_default_timeout: {type(method_itself)}")
+                if method_itself is None:
+                    await log_update(queue, "error", "CRITICAL: page_obj.set_default_timeout IS LITERALLY None!")
+                # Let's try calling it and see the type of what it returns BEFORE awaiting
+                try:
+                    coroutine_obj = page_obj.set_default_timeout(30000)
+                    await log_update(queue, "dev", f"Type of coroutine_obj from set_default_timeout(30000): {type(coroutine_obj)}")
+                    if coroutine_obj is None:
+                        await log_update(queue, "error", "CRITICAL: page_obj.set_default_timeout(30000) RETURNED None directly!")
+                except Exception as call_exc:
+                    await log_update(queue, "error", f"Error just CALLING page_obj.set_default_timeout(30000): {call_exc}")
         
         if not page_obj:
             await log_update(queue, "error", "CRITICAL: context.new_page() returned None.")
